@@ -7,7 +7,7 @@ import type { LedgerEntry, Customer, Invoice, DeliveryOrder } from '../types';
 import DebtPaymentForm from './DebtPaymentForm';
 import ManualPurchaseForm from './ManualPurchaseForm';
 import { DownloadIcon, XIcon, ChevronDownIcon, InfoIcon, EditIcon, TrashIcon, FileTextIcon, TruckIcon } from './icons';
-import { db } from '../supabaseClient';
+import { db } from '../apiClient';
 import { compressImageToBase64 } from '../imageUtils';
 
 interface LedgerViewProps {

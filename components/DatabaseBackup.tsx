@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { db } from '../apiClient';
 import JSZip from 'jszip';
 
 const TABLES = [
@@ -61,18 +61,7 @@ const DatabaseBackup: React.FC = () => {
     };
 
     const fetchAllDataFromTable = async (table: string) => {
-        let allData: any[] = [];
-        let from = 0;
-        const step = 1000;
-        while (true) {
-            const { data, error } = await supabase.from(table).select('*').range(from, from + step - 1);
-            if (error) throw error;
-            if (!data || data.length === 0) break;
-            allData = allData.concat(data);
-            if (data.length < step) break;
-            from += step;
-        }
-        return allData;
+        return await db.backupTable(table);
     };
 
     const handleDownloadAllZip = async () => {

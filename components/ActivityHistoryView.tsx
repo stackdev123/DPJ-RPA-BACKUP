@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import type { ActivityLog } from '../types';
-import { db } from '../supabaseClient';
+import { db } from '../apiClient';
 
 const ActivityHistoryView: React.FC = () => {
     const [logs, setLogs] = useState<ActivityLog[]>([]);

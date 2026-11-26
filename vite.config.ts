@@ -17,7 +17,6 @@ export default defineConfig({
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
             if (id.includes('react') || id.includes('react-dom')) return 'vendor-react';
-            if (id.includes('@supabase')) return 'vendor-supabase';
             if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('html-to-image')) return 'vendor-pdf';
             if (id.includes('xlsx') || id.includes('jszip')) return 'vendor-xlsx';
             return 'vendor';
@@ -30,10 +29,11 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
   },
   server: {
+    host: '0.0.0.0',
     port: 3000
   },
   // Optimasi dependency pre-bundling untuk dev server
   optimizeDeps: {
-    include: ['react', 'react-dom', '@supabase/supabase-js'],
+    include: ['react', 'react-dom'],
   }
 });

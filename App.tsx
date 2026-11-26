@@ -37,7 +37,7 @@ import ManualSJForm from './components/ManualSJForm';
 import ManualInvoiceForm from './components/ManualInvoiceForm';
 import EndingInventoryForm from './components/EndingInventoryForm';
 import { TrashIcon, XIcon } from './components/icons';
-import { db, supabase, isRecentlyMutatedLocally } from './supabaseClient';
+import { db, checkBackendHealth, hasAuthToken, clearAuthToken, setOnUnauthorized } from './apiClient';
 import { CACHED_LARGE_TABLES, type CachedTableName } from './idbCache';
 import {
     MODULE_PRESETS,
@@ -129,28 +129,9 @@ const LiveStatusHeader: React.FC<LiveStatusHeaderProps> = React.memo(({
 });
 
 const App: React.FC = () => {
-    const [isAuthenticated, setIsAuthenticated] = useState(() => {
-        try {
-            const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
-            if (isLoggedIn) {
-                const loginTs = localStorage.getItem('loginTimestamp');
-                if (loginTs && (Date.now() - parseInt(loginTs, 10) > 6 * 60 * 60 * 1000)) {
-                    localStorage.removeItem('isLoggedIn');
-                    localStorage.removeItem('username');
-                    localStorage.removeItem('userRole');
-                    localStorage.removeItem('loginTimestamp');
-                    return false;
-                }
-            }
-            return isLoggedIn;
-        } catch { return false; }
-    });
-    const [currentUserName, setCurrentUserName] = useState(() => {
-        try { return localStorage.getItem('username') || ''; } catch { return ''; }
-    });
-    const [userRole, setUserRole] = useState(() => {
-        try { return localStorage.getItem('userRole') || 'admin'; } catch { return 'admin'; }
-    });
+    const [isAuthenticated, setIsAuthenticated] = useState(() => hasAuthToken());
+    const [currentUserName, setCurrentUserName] = useState('');
+    const [userRole, setUserRole] = useState('admin');
     const liveStatusRef = useRef<LiveStatusSnapshot>({
         onlineUsers: [],
         realtimeStatus: 'connecting',
@@ -289,8 +270,6 @@ const App: React.FC = () => {
     const requiredTablesRef = useRef<Set<string>>(new Set());
 
     const rawDataRef = useRef({ ...EMPTY_RAW_DATA });
-
-    const channelRef = useRef<any>(null);
 
     const hydrateMasterAndStock = useCallback((rawMasterItems: MasterItem[], rawCurrentStock: any[]) => {
         const finalMasterItems = (rawMasterItems && rawMasterItems.length > 0 ? rawMasterItems : CHICKEN_PARTS.map(name => ({ name })))
@@ -822,103 +801,39 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, [isAuthenticated, currentUserName]);
 
-    const applyTableSliceRef = useRef(applyTableSlice);
-    const fetchTablesScopedRef = useRef(fetchTablesScoped);
     const getCurrentLocationRef = useRef(getCurrentLocation);
 
     useEffect(() => {
-        applyTableSliceRef.current = applyTableSlice;
-    }, [applyTableSlice]);
-
-    useEffect(() => {
-        fetchTablesScopedRef.current = fetchTablesScoped;
-    }, [fetchTablesScoped]);
-
-    useEffect(() => {
         getCurrentLocationRef.current = getCurrentLocation;
-        if (liveStatusRef.current.realtimeStatus === 'connected' && channelRef.current?.state === 'joined') {
-            channelRef.current.track({
-                online_at: new Date().toISOString(),
-                location: getCurrentLocation()
-            }).catch(() => { });
+        if (isAuthenticated && currentUserName) {
+            updateLiveStatus({
+                onlineUsers: [{ user: currentUserName, location: getCurrentLocation() }],
+            });
         }
-    }, [getCurrentLocation]);
+    }, [getCurrentLocation, isAuthenticated, currentUserName, updateLiveStatus]);
 
     useEffect(() => {
         if (!isAuthenticated || !currentUserName) return;
 
-        const channel = supabase.channel('app-live-status', {
-            config: {
-                presence: {
-                    key: currentUserName,
-                },
-            },
-        });
-        channelRef.current = channel;
-
-        let realtimeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-        const pendingTables = new Set<string>();
-
-        channel
-            .on('presence', { event: 'sync' }, () => {
-                const newState = channel.presenceState();
-                const users = Object.entries(newState).map(([key, presences]: [string, any]) => ({
-                    user: key,
-                    location: presences[0]?.location || 'Watching'
-                }));
-                updateLiveStatus({ onlineUsers: users });
-            })
-            .on('postgres_changes', { event: '*', schema: 'public' }, (payload: any) => {
-                const tableName = payload?.table as string | undefined;
-                if (!tableName || tableName === 'activity_logs' || tableName === 'users') {
-                    return;
-                }
-                if (isRecentlyMutatedLocally(tableName)) {
-                    return;
-                }
-
-                const isTableCurrentlyOpen = requiredTablesRef.current.has(tableName) || loadedTablesRef.current.has(tableName);
-
-                if (payload?.eventType === 'DELETE' && payload?.old?.id) {
-                    void db.applyRealtimeEventToCache(tableName, 'DELETE', undefined, payload.old).then((updatedRows) => {
-                        if (updatedRows && isTableCurrentlyOpen) {
-                            applyTableSliceRef.current(tableName, updatedRows);
-                        }
-                    });
-                }
-
-                // Skip network pulls & React re-renders for modules that are not currently open
-                if (!isTableCurrentlyOpen) {
-                    return;
-                }
-
-                pendingTables.add(tableName);
-                if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
-                realtimeDebounceTimer = setTimeout(() => {
-                    const tablesToSync = Array.from(pendingTables).filter(t => requiredTablesRef.current.has(t));
-                    pendingTables.clear();
-                    if (tablesToSync.length > 0) {
-                        void fetchTablesScopedRef.current(tablesToSync, true, false);
-                    }
-                }, 1500);
-            })
-            .subscribe(async (status: string) => {
-                if (status === 'SUBSCRIBED') {
-                    updateLiveStatus({ realtimeStatus: 'connected' });
-                    await channel.track({
-                        online_at: new Date().toISOString(),
-                        location: getCurrentLocationRef.current()
-                    });
-                } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                    updateLiveStatus({ realtimeStatus: 'error' });
-                }
+        let cancelled = false;
+        const pollHealth = async () => {
+            const healthy = await checkBackendHealth();
+            if (cancelled) return;
+            updateLiveStatus({
+                realtimeStatus: healthy ? 'connected' : 'error',
+                onlineUsers: [{ user: currentUserName, location: getCurrentLocationRef.current() }],
             });
+        };
+
+        void pollHealth();
+        const interval = setInterval(() => {
+            void pollHealth();
+        }, 30000);
 
         return () => {
-            if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
-            channelRef.current = null;
-            updateLiveStatus({ realtimeStatus: 'connecting' });
-            channel.unsubscribe();
+            cancelled = true;
+            clearInterval(interval);
+            updateLiveStatus({ realtimeStatus: 'connecting', onlineUsers: [] });
         };
     }, [isAuthenticated, currentUserName, updateLiveStatus]);
 
@@ -927,21 +842,26 @@ const App: React.FC = () => {
         try {
             const userData = await db.verifyUser(u, p);
             if (userData) {
-                await db.addActivityLog(u, 'LOGIN', 'users', u);
                 setWindows([INITIAL_WINDOW]);
                 setActiveWindowId(INITIAL_WINDOW.id);
                 setLayoutMode('single');
-                setIsAuthenticated(true); setCurrentUserName(u); setUserRole(userData.role);
-                localStorage.setItem('isLoggedIn', 'true'); localStorage.setItem('username', u); localStorage.setItem('userRole', userData.role);
-                localStorage.setItem('loginTimestamp', Date.now().toString());
-            } else { alert('Username atau password salah!'); }
+                setIsAuthenticated(true);
+                setCurrentUserName(userData.user || u);
+                setUserRole(userData.role || 'admin');
+                try {
+                    localStorage.setItem('loginTimestamp', Date.now().toString());
+                } catch { }
+            } else {
+                alert('Username atau password salah!');
+            }
         } catch (e: any) { alert('Error Login: ' + e.message); } finally { setIsLoading(false); }
     };
 
-    const handleLogout = async () => {
-        if (currentUserName) {
+    const handleLogout = useCallback(async () => {
+        if (currentUserName && hasAuthToken()) {
             try { await db.addActivityLog(currentUserName, 'LOGOUT', 'users', currentUserName); } catch (e) { }
         }
+        clearAuthToken();
         loadedTablesRef.current.clear();
         reconciledTablesRef.current.clear();
         rawDataRef.current = { ...EMPTY_RAW_DATA };
@@ -951,7 +871,14 @@ const App: React.FC = () => {
         setLayoutMode('single');
         setIsAuthenticated(false); setCurrentUserName(''); setUserRole('admin');
         try { localStorage.removeItem('isLoggedIn'); localStorage.removeItem('username'); localStorage.removeItem('userRole'); localStorage.removeItem('loginTimestamp'); } catch (e) { }
-    };
+    }, [currentUserName]);
+
+    useEffect(() => {
+        setOnUnauthorized(() => {
+            void handleLogout();
+        });
+        return () => setOnUnauthorized(null);
+    }, [handleLogout]);
 
     const handleApplyPending = async (record: any) => {
         try {
