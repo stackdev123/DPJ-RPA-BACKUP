@@ -11,16 +11,33 @@ types.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val)));
 // Parse PostgreSQL INT8 / BIGINT (OID 20) into JS numbers
 types.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10)));
 
-export const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT || 5432),
-  database: process.env.DB_NAME || 'dpj_rpa',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || '123456',
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-});
+const dbHost = process.env.DB_HOST || 'localhost';
+const isLocalHost = dbHost === 'localhost' || dbHost === '127.0.0.1';
+const useSsl =
+  process.env.DB_SSL === 'true' ||
+  (process.env.DB_SSL !== 'false' && (Boolean(process.env.DATABASE_URL) || !isLocalHost));
+
+const poolConfig = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    }
+  : {
+      host: dbHost,
+      port: Number(process.env.DB_PORT || 5432),
+      database: process.env.DB_NAME || 'dpj_rpa',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || '',
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    };
+
+export const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
   console.error('[PostgreSQL Pool Error]:', err.message);
