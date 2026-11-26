@@ -1,11 +1,12 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import crypto from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import { pool, query, withTransaction, translatePgError } from './db.js';
 
+const envResult = dotenv.config({ override: true });
 const app = express();
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(envResult.parsed?.PORT || process.env.BACKEND_PORT || 5000);
 const TOKEN_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 
@@ -14,10 +15,19 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:3000',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'https://ais-dev-4qgyzl4sbefljeofa2nwqw-81411647944.asia-east1.run.app',
+  'https://ais-pre-4qgyzl4sbefljeofa2nwqw-81411647944.asia-east1.run.app',
   ...(process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
     : []),
 ]);
+
+app.use((req, res, next) => {
+  if (req.headers['access-control-request-private-network']) {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  }
+  next();
+});
 
 app.use(
   cors({

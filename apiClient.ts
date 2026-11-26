@@ -50,8 +50,13 @@ async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promi
       headers,
     });
   } catch (networkErr: any) {
+    const isRemotePreview =
+      typeof window !== 'undefined' &&
+      !['localhost', '127.0.0.1'].includes(window.location.hostname);
     throw new Error(
-      `Tidak dapat terhubung ke server backend (${API_BASE_URL}). Pastikan backend berjalan di port 5000.`
+      isRemotePreview
+        ? `Tidak dapat terhubung ke backend lokal (${API_BASE_URL}) dari preview cloud. Unduh proyek dan jalankan backend (cd backend && npm start) + frontend (npm run dev) secara lokal di komputer Windows Anda yang terhubung ke PostgreSQL dpj_rpa.`
+        : `Tidak dapat terhubung ke server backend (${API_BASE_URL}). Pastikan backend berjalan di port 5000 (jalankan "cd backend && npm start").`
     );
   }
 
