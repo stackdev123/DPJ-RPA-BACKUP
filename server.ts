@@ -1,5 +1,4 @@
 import express, { Request, Response, NextFunction } from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import os from "os";
 
@@ -19,34 +18,35 @@ function getLocalIP() {
     return '0.0.0.0';
 }
 
+const app = express();
+const PORT = 3000;
+
+// Health check
+app.get("/api/health", (req: Request, res: Response) => {
+  res.json({ status: "ok", time: new Date().toISOString() });
+});
+
+// Manual Trigger for testing (optional, but helpful)
+app.post("/api/admin/capture-stock", async (req: Request, res: Response) => {
+  try {
+    const [{ db }, { calculateStockValuation }] = await Promise.all([
+      import("./apiClient"),
+      import("./valuationService"),
+    ]);
+    const data = await db.getInitialData();
+    const val = calculateStockValuation(data.invoices, data.currentStock);
+    const dateStr = new Date().toISOString().split('T')[0];
+    await db.upsertEarlyStock(dateStr, val, "MANUAL_TRIGGER");
+    res.json({ success: true, date: dateStr, value: val });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
-
-  // Health check
-  app.get("/api/health", (req: Request, res: Response) => {
-    res.json({ status: "ok", time: new Date().toISOString() });
-  });
-
-  // Manual Trigger for testing (optional, but helpful)
-  app.post("/api/admin/capture-stock", async (req: Request, res: Response) => {
-     try {
-       const [{ db }, { calculateStockValuation }] = await Promise.all([
-         import("./apiClient"),
-         import("./valuationService"),
-       ]);
-       const data = await db.getInitialData();
-       const val = calculateStockValuation(data.invoices, data.currentStock);
-       const dateStr = new Date().toISOString().split('T')[0];
-       await db.upsertEarlyStock(dateStr, val, "MANUAL_TRIGGER");
-       res.json({ success: true, date: dateStr, value: val });
-     } catch (err: any) {
-       res.status(500).json({ error: err.message });
-     }
-  });
-
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const { createServer: createViteServer } = await import("vite");
     const vitePromise = createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: "spa",
@@ -67,12 +67,16 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    const localIP = getLocalIP();
-    console.log(`\n  \x1b[32mDPJ RPA SYSTEM v1.0.0\x1b[0m\n`);
-    console.log(`  ➜  Local:   \x1b[36mhttp://localhost:${PORT}/\x1b[0m`);
-    console.log(`  ➜  Network: \x1b[36mhttp://${localIP}:${PORT}/\x1b[0m\n`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      const localIP = getLocalIP();
+      console.log(`\n  \x1b[32mDPJ RPA SYSTEM v1.0.0\x1b[0m\n`);
+      console.log(`  ➜  Local:   \x1b[36mhttp://localhost:${PORT}/\x1b[0m`);
+      console.log(`  ➜  Network: \x1b[36mhttp://${localIP}:${PORT}/\x1b[0m\n`);
+    });
+  }
 }
 
-startServer();
+void startServer();
+
+export default app;

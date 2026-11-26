@@ -2337,7 +2337,11 @@ app.use((err, _req, res, _next) => {
   res.status(mapped.status).json({ error: mapped.message });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  DPJ RPA Backend API berjalan di http://localhost:${PORT}`);
-  console.log(`  Database target: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'dpj_rpa'}\n`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  DPJ RPA Backend API berjalan di http://localhost:${PORT}`);
+    console.log(`  Database target: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'dpj_rpa'}\n`);
+  });
+}
+
+export default app;
